@@ -1,22 +1,39 @@
-#include <opencv2/opencv.hpp>
-#include <opencv2/videoio.hpp>
-#include <opencv2/highgui.hpp>
-
+#include <cstdint>
 #include <new>
+#include <opencv.hpp>
+#include <videoio.hpp>
+#include <highgui.hpp>
+
+static inline void fixup_mat(cv::Mat* m) {
+    if (!m) return;
+    if (m->dims <= 2) {
+        m->size.p = &m->rows;
+        m->step.p = m->step.buf;
+    }
+}
 
 extern "C" {
 
 // --- Mat ---
-void cv_Mat_init(cv::Mat* ptr) {
-    new (ptr) cv::Mat();
+void cv_Mat_init(cv::Mat* ptr, std::int32_t rows, std::int32_t cols, std::int32_t type) {
+    new (ptr) cv::Mat(rows, cols, type);
+}
+
+void cv_Mat_init_from_data(cv::Mat* ptr, std::int32_t rows, std::int32_t cols, std::int32_t type, void* data) {
+    new (ptr) cv::Mat(rows, cols, type, data);
 }
 
 void cv_Mat_destroy(cv::Mat* ptr) {
-    if (ptr) ptr->~Mat();
+    if (ptr) {
+        fixup_mat(ptr);
+        ptr->~Mat();
+    }
 }
 
 bool cv_Mat_empty(cv::Mat* mat) {
-    return mat ? mat->empty() : true;
+    if (!mat) return true;
+    fixup_mat(mat);
+    return mat->empty();
 }
 
 // --- VideoCapture ---
@@ -52,7 +69,9 @@ bool cv_VideoCapture_isOpened(cv::VideoCapture* cap) {
 }
 
 bool cv_VideoCapture_read(cv::VideoCapture* cap, cv::Mat* image) {
-    return (cap && image) ? cap->read(*image) : false;
+    if (!cap || !image) return false;
+    fixup_mat(image);
+    return cap->read(*image);
 }
 
 bool cv_VideoCapture_set(cv::VideoCapture* cap, int propId, double value) {
@@ -92,7 +111,10 @@ bool cv_VideoWriter_isOpened(cv::VideoWriter* writer) {
 }
 
 void cv_VideoWriter_write(cv::VideoWriter* writer, cv::Mat* image) {
-    if (writer && image) writer->write(*image);
+    if (writer && image) {
+        fixup_mat(image);
+        writer->write(*image);
+    }
 }
 
 // --- HighGUI ---
@@ -101,7 +123,10 @@ void cv_namedWindow(const char* winname, int flags) {
 }
 
 void cv_imshow(const char* winname, cv::Mat* mat) {
-    if (mat) cv::imshow(winname, *mat);
+    if (mat) {
+        fixup_mat(mat);
+        cv::imshow(winname, *mat);
+    }
 }
 
 int cv_waitKey(int delay) {
@@ -146,51 +171,151 @@ int cv_createButton(const char* bar_name, void (*on_change)(int state, void* use
 
 // --- Image Processing ---
 void cv_GaussianBlur(cv::Mat* src, cv::Mat* dst, int ksize_width, int ksize_height, double sigmaX, double sigmaY, int borderType) {
+    fixup_mat(src);
+    fixup_mat(dst);
     cv::GaussianBlur(*src, *dst, cv::Size(ksize_width, ksize_height), sigmaX, sigmaY, borderType);
 }
 
 void cv_Canny(cv::Mat* src, cv::Mat* dst, double threshold1, double threshold2, int apertureSize, bool L2gradient) {
+    fixup_mat(src);
+    fixup_mat(dst);
     cv::Canny(*src, *dst, threshold1, threshold2, apertureSize, L2gradient);
 }
 
 void cv_Sobel(cv::Mat* src, cv::Mat* dst, int ddepth, int dx, int dy, int ksize, double scale, double delta, int borderType) {
+    fixup_mat(src);
+    fixup_mat(dst);
     cv::Sobel(*src, *dst, ddepth, dx, dy, ksize, scale, delta, borderType);
 }
 
 void cv_convertScaleAbs(cv::Mat* src, cv::Mat* dst, double alpha, double beta) {
+    fixup_mat(src);
+    fixup_mat(dst);
     cv::convertScaleAbs(*src, *dst, alpha, beta);
 }
 
 void cv_resize(cv::Mat* src, cv::Mat* dst, int width, int height) {
+    fixup_mat(src);
+    fixup_mat(dst);
     cv::resize(*src, *dst, cv::Size(width, height));
 }
 
 void cv_rotate(cv::Mat* src, cv::Mat* dst, int rotateCode) {
+    fixup_mat(src);
+    fixup_mat(dst);
     cv::rotate(*src, *dst, rotateCode);
 }
 
 void cv_flip(cv::Mat* src, cv::Mat* dst, int flipCode) {
+    fixup_mat(src);
+    fixup_mat(dst);
     cv::flip(*src, *dst, flipCode);
 }
 
 void cv_convertTo(cv::Mat* src, cv::Mat* dst, int rtype, double alpha, double beta) {
+    fixup_mat(src);
+    fixup_mat(dst);
     src->convertTo(*dst, rtype, alpha, beta);
 }
 
 void cv_hconcat(cv::Mat* a, cv::Mat* b, cv::Mat* dst) {
+    fixup_mat(a);
+    fixup_mat(b);
+    fixup_mat(dst);
     cv::hconcat(*a, *b, *dst);
 }
 
 void cv_cvtColor(cv::Mat* src, cv::Mat* dst, int code) {
+    fixup_mat(src);
+    fixup_mat(dst);
     cv::cvtColor(*src, *dst, code);
 }
 
 int cv_channels(cv::Mat* mat) {
-    return mat ? mat->channels() : 0;
+    if (!mat) return 0;
+    fixup_mat(mat);
+    return mat->channels();
 }
 
 int cv_imwrite(const char* filename, cv::Mat* image) {
-    return (image && cv::imwrite(filename, *image)) ? 1 : 0;
+    if (!image) return 0;
+    fixup_mat(image);
+    return cv::imwrite(filename, *image) ? 1 : 0;
+}
+
+void cv_filter2D(cv::Mat* src, cv::Mat* dst, int ddepth, cv::Mat* kernel, int borderType) {
+    fixup_mat(src);
+    fixup_mat(dst);
+    fixup_mat(kernel);
+    cv::filter2D(*src, *dst, ddepth, *kernel, cv::Point(-1, -1), 0.0, borderType);
+}
+
+double cv_threshold(cv::Mat* src, cv::Mat* dst, double thresh, double maxval, int type) {
+    fixup_mat(src);
+    fixup_mat(dst);
+    return cv::threshold(*src, *dst, thresh, maxval, type);
+}
+
+void cv_bitwise_and(cv::Mat* src1, cv::Mat* src2, cv::Mat* dst) {
+    fixup_mat(src1);
+    fixup_mat(src2);
+    fixup_mat(dst);
+    cv::bitwise_and(*src1, *src2, *dst);
+}
+
+void cv_divide(cv::Mat* src1, cv::Mat* src2, cv::Mat* dst) {
+    fixup_mat(src1);
+    fixup_mat(src2);
+    fixup_mat(dst);
+    cv::divide(*src1, *src2, *dst);
+}
+
+void cv_add(cv::Mat* src1, cv::Mat* src2, cv::Mat* dst) {
+    fixup_mat(src1);
+    fixup_mat(src2);
+    fixup_mat(dst);
+    cv::add(*src1, *src2, *dst);
+}
+
+void cv_setTo(cv::Mat* mat, double value, cv::Mat* mask) {
+    fixup_mat(mat);
+    fixup_mat(mask);
+    if (mask && !mask->empty()) {
+        mat->setTo(cv::Scalar(value), *mask);
+    } else {
+        mat->setTo(cv::Scalar(value));
+    }
+}
+
+void cv_copyTo(cv::Mat* src, cv::Mat* dst, cv::Mat* mask) {
+    fixup_mat(src);
+    fixup_mat(dst);
+    fixup_mat(mask);
+    if (mask && !mask->empty()) {
+        src->copyTo(*dst, *mask);
+    } else {
+        src->copyTo(*dst);
+    }
+}
+
+void cv_gradient_x(cv::Mat* src, cv::Mat* dst) {
+    fixup_mat(src);
+    fixup_mat(dst);
+    cv::Sobel(*src, *dst, -1, 1, 0, 3, 1.0, 0.0, cv::BORDER_DEFAULT);
+}
+
+void cv_gradient_y(cv::Mat* src, cv::Mat* dst) {
+    fixup_mat(src);
+    fixup_mat(dst);
+    cv::Sobel(*src, *dst, -1, 0, 1, 3, 1.0, 0.0, cv::BORDER_DEFAULT);
+}
+
+void cv_remap(cv::Mat* src, cv::Mat* dst, cv::Mat* map1, cv::Mat* map2, int interpolation, int borderMode) {
+    fixup_mat(src);
+    fixup_mat(dst);
+    fixup_mat(map1);
+    fixup_mat(map2);
+    cv::remap(*src, *dst, *map1, *map2, interpolation, borderMode, cv::Scalar(0));
 }
 
 }
