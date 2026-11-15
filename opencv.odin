@@ -1,21 +1,25 @@
 package opencv
 
 import "base:runtime"
+import "base:builtin"
 
 // --- Core structs ---
 Mat :: struct($T: typeid) #align(8) {
-	flags:     i32,
-	dims:      i32,
-	rows:      i32,
-	cols:      i32,
-	data:      [^]T,
-	datastart: [^]T,
-	dataend:   [^]T,
-	datalimit: [^]T,
-	allocator: rawptr,
-	u:         rawptr,
-	size:      rawptr,
-	step:      [3]uint,
+	using _cvmat: struct {
+        flags:     i32,
+	    dims:      i32,
+	    rows:      i32,
+	    cols:      i32,
+	    data:      [^]T,
+	    datastart: [^]T,
+	    dataend:   [^]T,
+	    datalimit: [^]T,
+	    _allocator: rawptr,
+	    u:         rawptr,
+	    size:      rawptr,
+	    step:      [3]uint,
+    },
+    allocator: runtime.Allocator,
 }
 
 VideoCapture :: struct #align(8) {
@@ -26,8 +30,8 @@ VideoWriter :: struct #align(8) {
 	_data: [40]u8,
 }
 
-#assert(size_of(Mat(u8)) == 96)
-#assert(size_of(Mat(f32)) == 96)
+// The header size is not hard-coded or asserted here: the C++ wrapper exports it
+// as cv_mat_sizeof, and the field order above is what puts the Odin tail after it.
 #assert(size_of(VideoCapture) == 48)
 #assert(size_of(VideoWriter) == 40)
 
@@ -181,6 +185,9 @@ foreign import lib {
 @(default_calling_convention = "c")
 foreign lib {
 	// Mat
+	@(link_name = "cv_mat_sizeof")
+	mat_sizeof: i32
+
 	@(link_name = "cv_Mat_init")
 	_mat_init :: proc(ptr: rawptr, rows: i32, cols: i32, type: i32) ---
 
@@ -326,6 +333,9 @@ foreign lib {
 	@(link_name = "cv_threshold")
 	_threshold :: proc(src, dst: rawptr, thresh, maxval: f64, type: i32) -> f64 ---
 
+	@(link_name = "cv_sum")
+	_sum :: proc(mat: rawptr) -> f64 ---
+
 	@(link_name = "cv_bitwise_and")
 	_bitwise_and :: proc(src1, src2, dst: rawptr) ---
 
@@ -335,11 +345,26 @@ foreign lib {
 	@(link_name = "cv_add")
 	_add :: proc(src1, src2, dst: rawptr) ---
 
+	@(link_name = "cv_multiply")
+	_multiply :: proc(src1, src2, dst: rawptr) ---
+
+	@(link_name = "cv_magnitude")
+	_magnitude :: proc(src1, src2, dst: rawptr) ---
+
+	@(link_name = "cv_merge")
+	_merge :: proc(src1, src2, dst: rawptr) ---
+
+	@(link_name = "cv_max")
+	_max :: proc(src1, src2, dst: rawptr) ---
+
 	@(link_name = "cv_setTo")
 	_set_to :: proc(mat: rawptr, value: f64, mask: rawptr) ---
 
 	@(link_name = "cv_copyTo")
 	_copy_to :: proc(src, dst, mask: rawptr) ---
+
+	@(link_name = "cv_copy_make_border")
+	_copy_make_border :: proc(src, dst: rawptr, top, bottom, left, right: i32, border_type: i32) ---
 
 	@(link_name = "cv_gradient_x")
 	_gradient_x :: proc(src, dst: rawptr) ---
@@ -352,84 +377,76 @@ foreign lib {
 }
 
 // --- Procedural wrappers for Mat ---
-
-mat_init :: proc(ptr: ^Mat($T), rows: i32 = 0, cols: i32 = 0, type: i32 = 0) {
-	_mat_init(ptr, rows, cols, type)
+mat_init :: proc(ptr: ^Mat($T), rows: i32 = 0, cols: i32 = 0, allocator := context.allocator) -> (err: runtime.Allocator_Error) {
+	if rows <= 0 || cols <= 0 {
+		_mat_init(ptr, rows, cols, mat_type_of(T))
+		return
+	}
+    if allocator.procedure == nil { // Uses cpp memory allocation strategy
+        _mat_init(ptr, rows, cols, mat_type_of(T))
+        return
+    }
+	buffer, buffer_err := builtin.make([]T, rows * cols, allocator)
+	if buffer_err != .None do return buffer_err
+	_mat_init_from_data(ptr, rows, cols, mat_type_of(T), raw_data(buffer))
+	ptr.allocator = allocator
+	return
 }
 
-mat_destroy :: proc(ptr: ^Mat($T)) {
+mat_destroy :: proc(ptr: ^Mat($T)) -> runtime.Allocator_Error {
+	if ptr.allocator != nil {
+		err = runtime.mem_free(raw_data(ptr.data), ptr.allocator)
+		ptr.allocator = {}
+	}
 	_mat_destroy(ptr)
+	return {}
 }
 
 mat_empty :: proc(mat: ^Mat($T)) -> bool {
 	return _mat_empty(mat)
 }
 
-new_mat :: proc($T: typeid, rows, cols: int) -> (m: Mat(T)) {
-	cv_type: i32
+cv_type_of :: proc($T: typeid) -> i32 {
 	when T == u8 {
-		cv_type = 0 // CV_8U
+		return 0 // CV_8U
 	} else when T == i8 {
-		cv_type = 1 // CV_8S
+		return 1 // CV_8S
 	} else when T == u16 {
-		cv_type = 2 // CV_16U
+		return 2 // CV_16U
 	} else when T == i16 {
-		cv_type = 3 // CV_16S
+		return 3 // CV_16S
 	} else when T == i32 {
-		cv_type = 4 // CV_32S
+		return 4 // CV_32S
 	} else when T == f32 {
-		cv_type = 5 // CV_32F
+		return 5 // CV_32F
 	} else when T == f64 {
-		cv_type = 6 // CV_64F
+		return 6 // CV_64F
+	} else when T == [2]f32 {
+		return 13 // CV_32FC2
 	} else {
 		#panic("Unsupported Mat element type")
 	}
-	_mat_init(&m, i32(rows), i32(cols), cv_type)
-	return m
+}
+
+mat_type_of :: proc($T: typeid) -> i32 {
+	return cv_type_of(T)
+}
+
+mat_new :: proc($T: typeid, rows, cols: int, allocator := context.allocator) -> (m: Mat(T), err: runtime.Allocator_Error) #optional_allocator_error {
+	buffer := builtin.make([]T, rows * cols, allocator) or_return
+	_mat_init_from_data(&m, i32(rows), i32(cols), mat_type_of(T), raw_data(buffer))
+	m.allocator = allocator
+    return
 }
 
 view_slice :: proc(data: []$T, rows, cols: int) -> (m: Mat(T)) {
-	cv_type: i32
-	when T == u8 {
-		cv_type = 0
-	} else when T == i8 {
-		cv_type = 1
-	} else when T == u16 {
-		cv_type = 2
-	} else when T == i16 {
-		cv_type = 3
-	} else when T == i32 {
-		cv_type = 4
-	} else when T == f32 {
-		cv_type = 5
-	} else when T == f64 {
-		cv_type = 6
-	} else {
-		#panic("Unsupported Mat element type")
-	}
+	cv_type := cv_type_of(T)
 	_mat_init_from_data(&m, i32(rows), i32(cols), cv_type, raw_data(data))
 	return m
 }
 
 view_ptr :: proc(data: [^]$T, rows, cols: int) -> (m: Mat(T)) {
-	cv_type: i32
-	when T == u8 {
-		cv_type = 0
-	} else when T == i8 {
-		cv_type = 1
-	} else when T == u16 {
-		cv_type = 2
-	} else when T == i16 {
-		cv_type = 3
-	} else when T == i32 {
-		cv_type = 4
-	} else when T == f32 {
-		cv_type = 5
-	} else when T == f64 {
-		cv_type = 6
-	} else {
-		#panic("Unsupported Mat element type")
-	}
+	cv_type := cv_type_of(T)
 	_mat_init_from_data(&m, i32(rows), i32(cols), cv_type, rawptr(data))
 	return m
 }
@@ -448,24 +465,50 @@ pixels_val :: proc(m: Mat($T)) -> []T {
 
 pixels :: proc{pixels_ptr, pixels_val}
 
+at :: proc(m: ^Mat($T), x, y: int) -> ^T {
+	return &m.data[x + y * int(m.cols)]
+}
+
 filter_2d :: proc(src: ^Mat($TS), dst: ^Mat($TD), kernel: ^Mat($TK), ddepth: i32 = -1, border_type: BorderType = .CONSTANT) {
 	_filter2D(src, dst, ddepth, kernel, i32(border_type))
 }
 
-threshold_mask :: proc(src, dst: ^Mat($T), thresh: f64, maxval: f64, type: ThresholdType) {
+threshold :: proc(src, dst: ^Mat($T), thresh: f64, maxval: f64, type: ThresholdType) {
 	_threshold(src, dst, thresh, maxval, i32(type))
 }
 
-and_masks :: proc(src1, src2, dst: ^Mat($T)) {
+// sum is the image's total: cv::sum gives one value per channel and only
+// channel 0 is read, because every image in this project is single channel.
+sum :: proc(mat: ^Mat($T)) -> f64 {
+	return _sum(mat)
+}
+
+and :: proc(src1, src2, dst: ^Mat($T)) {
 	_bitwise_and(src1, src2, dst)
 }
 
-divide_images :: proc(src1, src2, dst: ^Mat($T)) {
+div :: proc(src1, src2, dst: ^Mat($T)) {
 	_divide(src1, src2, dst)
 }
 
-add_images :: proc(src1, src2, dst: ^Mat($T)) {
+add :: proc(src1, src2, dst: ^Mat($T)) {
 	_add(src1, src2, dst)
+}
+
+mul :: proc(src1, src2, dst: ^Mat($T)) {
+	_multiply(src1, src2, dst)
+}
+
+magnitude :: proc(src1, src2: ^Mat($TS), dst: ^Mat($TD)) {
+	_magnitude(src1, src2, dst)
+}
+
+merge :: proc(src1, src2: ^Mat($TS), dst: ^Mat($TD)) {
+	_merge(src1, src2, dst)
+}
+
+max :: proc(src1, src2, dst: ^Mat($T)) {
+	_max(src1, src2, dst)
 }
 
 set_to :: proc(mat: ^Mat($T), value: f64, mask: ^Mat($TM) = nil) {
@@ -474,6 +517,10 @@ set_to :: proc(mat: ^Mat($T), value: f64, mask: ^Mat($TM) = nil) {
 
 copy_to :: proc(src, dst: ^Mat($TS), mask: ^Mat($TM) = nil) {
 	_copy_to(src, dst, mask)
+}
+
+copy_make_border :: proc(src, dst: ^Mat($T), top, bottom, left, right: i32, border_type := BorderType.DEFAULT) {
+	_copy_make_border(src, dst, top, bottom, left, right, i32(border_type))
 }
 
 gradient_x :: proc(src, dst: ^Mat($T)) {
@@ -528,7 +575,7 @@ flip :: proc(src, dst: ^Mat($T), flip_code: FlipCode) {
 	_flip(src, dst, flip_code)
 }
 
-convert_to :: proc(src, dst: ^Mat($T), rtype: i32, alpha: f64 = 1, beta: f64 = 0) {
+convert_to :: proc(src: ^Mat($TS), dst: ^Mat($TD), rtype: i32, alpha: f64 = 1, beta: f64 = 0) {
 	_convert_to(src, dst, rtype, alpha, beta)
 }
 
