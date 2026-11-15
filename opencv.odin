@@ -357,6 +357,9 @@ foreign lib {
 	@(link_name = "cv_max")
 	_max :: proc(src1, src2, dst: rawptr) ---
 
+	@(link_name = "cv_max_scalar")
+	_max_scalar :: proc(src: rawptr, value: f64, dst: rawptr) ---
+
 	@(link_name = "cv_setTo")
 	_set_to :: proc(mat: rawptr, value: f64, mask: rawptr) ---
 
@@ -367,10 +370,10 @@ foreign lib {
 	_copy_make_border :: proc(src, dst: rawptr, top, bottom, left, right: i32, border_type: i32) ---
 
 	@(link_name = "cv_gradient_x")
-	_gradient_x :: proc(src, dst: rawptr) ---
+	_gradient_x :: proc(src, dst: rawptr, border_type: i32) ---
 
 	@(link_name = "cv_gradient_y")
-	_gradient_y :: proc(src, dst: rawptr) ---
+	_gradient_y :: proc(src, dst: rawptr, border_type: i32) ---
 
 	@(link_name = "cv_remap")
 	_remap :: proc(src, dst, map1, map2: rawptr, interpolation, border_mode: i32) ---
@@ -511,8 +514,19 @@ max :: proc(src1, src2, dst: ^Mat($T)) {
 	_max(src1, src2, dst)
 }
 
+max_scalar :: proc(src: ^Mat($T), value: f64, dst: ^Mat(T)) {
+	_max_scalar(src, value, dst)
+}
+
 set_to :: proc(mat: ^Mat($T), value: f64, mask: ^Mat($TM) = nil) {
 	_set_to(mat, value, mask)
+}
+
+// fill writes one value over the whole image. set_to cannot be called without
+// a mask, because its mask parameter is polymorphic and an untyped nil leaves
+// the type open, so this passes the null mask through here instead.
+fill :: proc(mat: ^Mat($T), value: f64) {
+	_set_to(mat, value, nil)
 }
 
 copy_to :: proc(src, dst: ^Mat($TS), mask: ^Mat($TM) = nil) {
@@ -523,12 +537,12 @@ copy_make_border :: proc(src, dst: ^Mat($T), top, bottom, left, right: i32, bord
 	_copy_make_border(src, dst, top, bottom, left, right, i32(border_type))
 }
 
-gradient_x :: proc(src, dst: ^Mat($T)) {
-	_gradient_x(src, dst)
+gradient_x :: proc(src, dst: ^Mat($T), border_type := BorderType.REFLECT_101) {
+	_gradient_x(src, dst, i32(border_type))
 }
 
-gradient_y :: proc(src, dst: ^Mat($T)) {
-	_gradient_y(src, dst)
+gradient_y :: proc(src, dst: ^Mat($T), border_type := BorderType.REFLECT_101) {
+	_gradient_y(src, dst, i32(border_type))
 }
 
 resample :: proc(src: ^Mat($TS), dst: ^Mat($TD), map1: ^Mat($TM1), map2: ^Mat($TM2), interpolation: InterpolationFlags = .NEAREST, border_mode: BorderType = .CONSTANT) {

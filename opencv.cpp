@@ -309,6 +309,15 @@ void cv_max(cv::Mat* src1, cv::Mat* src2, cv::Mat* dst) {
     cv::max(*src1, *src2, *dst);
 }
 
+// max against a constant, so a caller can lift a floor without a second image.
+// cv::max returns an expression, and assigning it reuses dst when the size and
+// type already match, which is the case for every Odin-allocated destination.
+void cv_max_scalar(cv::Mat* src, double value, cv::Mat* dst) {
+    fixup_mat2d(src);
+    fixup_mat2d(dst);
+    *dst = cv::max(*src, value);
+}
+
 void cv_merge(cv::Mat* src1, cv::Mat* src2, cv::Mat* dst) {
     fixup_mat2d(src1);
     fixup_mat2d(src2);
@@ -344,16 +353,16 @@ void cv_copy_make_border(cv::Mat* src, cv::Mat* dst, int top, int bottom, int le
     cv::copyMakeBorder(*src, *dst, top, bottom, left, right, borderType);
 }
 
-void cv_gradient_x(cv::Mat* src, cv::Mat* dst) {
+void cv_gradient_x(cv::Mat* src, cv::Mat* dst, int borderType) {
     fixup_mat2d(src);
     fixup_mat2d(dst);
-    cv::Sobel(*src, *dst, -1, 1, 0, 3, 1.0, 0.0, cv::BORDER_DEFAULT);
+    cv::Sobel(*src, *dst, -1, 1, 0, 3, 1.0, 0.0, borderType);
 }
 
-void cv_gradient_y(cv::Mat* src, cv::Mat* dst) {
+void cv_gradient_y(cv::Mat* src, cv::Mat* dst, int borderType) {
     fixup_mat2d(src);
     fixup_mat2d(dst);
-    cv::Sobel(*src, *dst, -1, 0, 1, 3, 1.0, 0.0, cv::BORDER_DEFAULT);
+    cv::Sobel(*src, *dst, -1, 0, 1, 3, 1.0, 0.0, borderType);
 }
 
 void cv_remap(cv::Mat* src, cv::Mat* dst, cv::Mat* map1, cv::Mat* map2, int interpolation, int borderMode) {
