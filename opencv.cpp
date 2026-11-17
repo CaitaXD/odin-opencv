@@ -318,6 +318,66 @@ void cv_max_scalar(cv::Mat* src, double value, cv::Mat* dst) {
     *dst = cv::max(*src, value);
 }
 
+// Add src into dst shifted by (dx, dy): dst(x + dx, y + dy) += src(x, y). Only
+// the overlap of the two images is touched, so a move that leaves the grid drops
+// that mass and a move that stays inside writes every destination exactly once.
+// The source is read as a view, so nothing is copied to shift it.
+void cv_shift_add(cv::Mat* src, std::int32_t dx, std::int32_t dy, cv::Mat* dst) {
+    fixup_mat2d(src);
+    fixup_mat2d(dst);
+    const int w = src->cols;
+    const int h = src->rows;
+    const int sx = dx < 0 ? -dx : 0;
+    const int sy = dy < 0 ? -dy : 0;
+    const int dx0 = dx < 0 ? 0 : dx;
+    const int dy0 = dy < 0 ? 0 : dy;
+    const int cw = w - (dx < 0 ? -dx : dx);
+    const int ch = h - (dy < 0 ? -dy : dy);
+    if (cw <= 0 || ch <= 0) return;
+    cv::Mat s = (*src)(cv::Rect(sx, sy, cw, ch));
+    cv::Mat d = (*dst)(cv::Rect(dx0, dy0, cw, ch));
+    cv::add(d, s, d);
+}
+
+// Copy src into dst shifted by (dx, dy): dst(x + dx, y + dy) = src(x, y). Only
+// the overlap is written, so the rest of dst keeps whatever the caller left
+// there, which is what makes a shift read as a wall off the edge of the grid.
+void cv_shift_copy(cv::Mat* src, std::int32_t dx, std::int32_t dy, cv::Mat* dst) {
+    fixup_mat2d(src);
+    fixup_mat2d(dst);
+    const int w = src->cols;
+    const int h = src->rows;
+    const int sx = dx < 0 ? -dx : 0;
+    const int sy = dy < 0 ? -dy : 0;
+    const int dx0 = dx < 0 ? 0 : dx;
+    const int dy0 = dy < 0 ? 0 : dy;
+    const int cw = w - (dx < 0 ? -dx : dx);
+    const int ch = h - (dy < 0 ? -dy : dy);
+    if (cw <= 0 || ch <= 0) return;
+    cv::Mat s = (*src)(cv::Rect(sx, sy, cw, ch));
+    cv::Mat d = (*dst)(cv::Rect(dx0, dy0, cw, ch));
+    s.copyTo(d);
+}
+
+// OpenCV has no primitive that yields pixel coordinates, so a remap map has to
+// be seeded with an identity. This runs once per image, at setup, and the maps
+// it produces are only ever read or added to afterwards.
+void cv_init_coord_maps(cv::Mat* map_x, cv::Mat* map_y) {
+    if (!map_x || !map_y) return;
+    fixup_mat2d(map_x);
+    fixup_mat2d(map_y);
+    const int w = map_x->cols;
+    const int h = map_x->rows;
+    for (int y = 0; y < h; ++y) {
+        float* row_x = map_x->ptr<float>(y);
+        float* row_y = map_y->ptr<float>(y);
+        for (int x = 0; x < w; ++x) {
+            row_x[x] = static_cast<float>(x);
+            row_y[x] = static_cast<float>(y);
+        }
+    }
+}
+
 void cv_merge(cv::Mat* src1, cv::Mat* src2, cv::Mat* dst) {
     fixup_mat2d(src1);
     fixup_mat2d(src2);

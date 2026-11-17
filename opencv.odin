@@ -351,6 +351,15 @@ foreign lib {
 	@(link_name = "cv_magnitude")
 	_magnitude :: proc(src1, src2, dst: rawptr) ---
 
+	@(link_name = "cv_shift_add")
+	_shift_add :: proc(src: rawptr, dx, dy: i32, dst: rawptr) ---
+
+	@(link_name = "cv_shift_copy")
+	_shift_copy :: proc(src: rawptr, dx, dy: i32, dst: rawptr) ---
+
+	@(link_name = "cv_init_coord_maps")
+	_init_coord_maps :: proc(map_x, map_y: rawptr) ---
+
 	@(link_name = "cv_merge")
 	_merge :: proc(src1, src2, dst: rawptr) ---
 
@@ -498,6 +507,26 @@ add :: proc(src1, src2, dst: ^Mat($T)) {
 	_add(src1, src2, dst)
 }
 
+// shift_add adds src into dst moved by (dx, dy) cells: dst(x + dx, y + dy) is
+// increased by src(x, y). This is the scatter half of the advection, so a move
+// is one call instead of a pass over the grid.
+shift_add :: proc(src: ^Mat($TS), dx, dy: int, dst: ^Mat($TD)) {
+	_shift_add(src, i32(dx), i32(dy), dst)
+}
+
+// shift_copy writes src into dst moved by (dx, dy) cells and leaves the rest of
+// dst alone, so the caller can fill the far edge with a value of its own.
+shift_copy :: proc(src: ^Mat($TS), dx, dy: int, dst: ^Mat($TD)) {
+	_shift_copy(src, i32(dx), i32(dy), dst)
+}
+
+// init_coord_maps seeds two f32 images with the x and y coordinate of every
+// pixel, which is the identity a remap gathers through. OpenCV has no primitive
+// that yields coordinates, so this runs once per image at setup.
+init_coord_maps :: proc(map_x, map_y: ^Mat(f32)) {
+	_init_coord_maps(map_x, map_y)
+}
+
 mul :: proc(src1, src2, dst: ^Mat($T)) {
 	_multiply(src1, src2, dst)
 }
@@ -529,7 +558,13 @@ fill :: proc(mat: ^Mat($T), value: f64) {
 	_set_to(mat, value, nil)
 }
 
-copy_to :: proc(src, dst: ^Mat($TS), mask: ^Mat($TM) = nil) {
+// copy_to copies the whole image; copy_to_masked takes a mask, which has to be a
+// typed image for the polymorphic parameter to resolve.
+copy_to :: proc(src, dst: ^Mat($T)) {
+	_copy_to(src, dst, nil)
+}
+
+copy_to_masked :: proc(src, dst: ^Mat($TS), mask: ^Mat($TM)) {
 	_copy_to(src, dst, mask)
 }
 
